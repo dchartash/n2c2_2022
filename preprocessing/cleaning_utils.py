@@ -7,3 +7,12 @@ def extract_text_segments(example, mimic_note_df=None):
     example['PlanSubsection'] = mimic_note_df[mimic_note_df['ROW_ID'] == example["ROW ID"]]['TEXT'].values[0][example["PlanSubsection Begin"]:example["PlanSubsection End"]]
     
     return example
+
+
+
+def tokenize_function(examples):
+    return bio_clinicalbert_tokenizer(examples['Assessment'], examples['Plan Subsection'],
+                                      truncation="longest_first",
+                                      max_length=512,
+                                      verbose=True)
+                    
