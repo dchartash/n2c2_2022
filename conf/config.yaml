@@ -1,0 +1,13 @@
+defaults:
+    - model: bert
+
+train:
+    fast_dev_run: false
+    epochs: 5
+
+data:
+    mimic_data_dir: "/home/vs428/project/MIMIC/files/mimiciii/1.4/"
+    n2c2_data_dir: "/home/vs428/project/n2c2/2022/Data/"
+    
+hardware:
+    gpu: true

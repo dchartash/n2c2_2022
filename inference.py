@@ -1,13 +1,15 @@
 import pandas as pd 
 import numpy as np
-
+import tqdm
 
 from functools import partial
 import torch 
+from torch.utils.data import Dataset
 
 from datasets import load_dataset
 from datasets import Value, ClassLabel, Features, DatasetDict
 from datasets import load_metric
+
 
 import transformers
 from transformers import AutoTokenizer, AutoModel, AutoModelForMaskedLM, AutoModelForSequenceClassification
@@ -15,6 +17,9 @@ from transformers import GPT2Tokenizer, GPTNeoForSequenceClassification
 from transformers import DataCollatorWithPadding
 from transformers import logging
 from transformers import TrainingArguments, Trainer
+from transformers import pipeline
+from transformers import EvalPrediction
+
 
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -47,13 +52,11 @@ def main(cfg: DictConfig) -> None:
 
         model = GPTNeoForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4,
                                                                 problem_type="single_label_classification",
-                                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"))
+                                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"),
+)
         model.resize_token_embeddings(len(tokenizer))        
     else:
         raise ValueError(f"Model type isn't bert or gpt-neo, it's {cfg.model.model_type}")
-
-    # Read MIMIC notes
-    # notes = pd.read_csv(cfg.data.mimic_data_dir + "NOTEEVENTS.csv")
 
     # create hf Dataset
     classes = ['Not Relevant', 'Neither', 'Indirect', 'Direct']
@@ -102,37 +105,48 @@ def main(cfg: DictConfig) -> None:
     metric_dict['accuracy'] = {"metric":acc}
     metric_dict['f1-macro'] = {"metric":macrof1, "average":"macro"}
     
-    # tokenize
-    dataset = dataset.map(partial(tokenize_function, tokenizer=tokenizer), batched=True)
+    print("Creating GPT prompts...")
+    # create GPT prompts
+    prompts = []
+    labels = []
+    for data in dataset['valid']:
+        question = 'To which category does the text belong?: "Direct", "Indirect", "Neither", "Not Relevant"'
+        prompt_str = question + '\nAssessment: ' + data['Assessment'] + '\nPlan: ' + data['Plan Subsection'] + '\nLabel: ' #\
+            # + str(data['label'])
+        labels.append(data['label'])
+        prompts.append(prompt_str)
     
-    print(tokenizer.decode(dataset['valid'][0]['input_ids']))
-        
-    # cast as pytorch tensors and select a subset of columns we want
-    if cfg.model.model_type == "gptneo":
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-    else:
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])    
-    
-    # create collator
-    data_collator = DataCollatorWithPadding(tokenizer,
-                                            max_length=1024, 
-                                            padding="max_length",
-                                            return_tensors="pt")    
-    # create Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=dataset['train'],
-        eval_dataset=dataset['valid'],
-        compute_metrics=partial(compute_metrics, metric_dict=metric_dict),
-        data_collator=data_collator,
-    )    
-    
-    # train!!
-    trainer.train()    
+    class ListDataset(Dataset):
+        def __init__(self, original_list):
+            self.original_list = original_list
 
+        def __len__(self):
+            return len(self.original_list)
+
+        def __getitem__(self, i):
+            return self.original_list[i]    
+        
+    print("Creating Dataset obj...")        
+    mydataset = ListDataset(prompts)
+
+    print("Defining pipeline...")
+    rel_classifier = pipeline(task="text-classification", model=model, tokenizer=tokenizer, 
+                              return_all_scores=True, device=0, padding="max_length", max_length=512,
+                             truncation=True)
+    
+    logits = np.zeros(shape=(len(prompts),4))
+    labels = np.array(labels)
+
+    print("Inference...")    
+    for idx, pred in enumerate(tqdm.tqdm(rel_classifier(mydataset))):
+        pred_logits = [x['score'] for x in pred]
+        logits[idx, :] = pred_logits
+                
+        
+    compute_metrics_func=partial(compute_metrics, metric_dict=metric_dict)
+    metrics = compute_metrics_func(EvalPrediction(logits, labels))
+    print("Metrics:", metrics)
+    
 if __name__ == "__main__":
     main()
     
