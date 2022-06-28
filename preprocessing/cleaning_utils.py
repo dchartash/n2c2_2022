@@ -22,6 +22,50 @@ def tokenize_function(examples, tokenizer=None):
                                       verbose=True)
                     
 
+def remove_mimic_deid(example):
+    
+    example['Assessment'] = re.sub(r"\[\*\*.*?\*\*\]", "", example['Assessment'])
+    example['Plan Subsection'] = re.sub(r"\[\*\*.*?\*\*\]", "", example['Plan Subsection'])    
+    
+    return example    
+    
+def add_ner_assessment(example, nlp=None):
+    '''
+    Takes a trained spacy model and tags with the NER tags we trained on for assessment
+    '''
+    tagged = ""
+    orig = example['Assessment']
+    doc = nlp(example['Assessment'])
+    
+    index = 0
+    for ent in doc.ents:
+        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+        index = ent.end_char
+    tagged += orig[index:]
+
+    example['Assessment'] = tagged
+    return example
+
+
+def add_ner_plan(example, nlp=None):
+    '''
+    Takes a trained spacy model and tags with the NER tags we trained on for assessment
+    '''
+    tagged = ""
+    orig = example['Plan Subsection']
+    doc = nlp(example['Plan Subsection'])
+    
+    index = 0
+    for ent in doc.ents:
+        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+        index = ent.end_char
+    tagged += orig[index:]
+
+    example['Plan Subsection'] = tagged
+    return example
+
+
+    
 def split_leading_symptom_list(example):
     '''Mapping function to split text with a leading symptom list, if it exists, and return the rest of the assessment
     '''
@@ -86,4 +130,10 @@ def expand_abbreviations(example, spacy_pip=None, abbv_map=None, unq_sfs=None):
     
     return example
 
+
+def remove_MIMIC_deid(example):
+    pat = re.compile("\[\*\*.*?\*\*\]")
+    example['Assessment'] = pat.sub("PLACEHOLDER", example['Assessment'])
     
+    example['Plan Subsection'] = pat.sub("", example['Plan Subsection'])
+    return example    

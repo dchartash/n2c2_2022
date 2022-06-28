@@ -1,9 +1,12 @@
+import re 
+from functools import partial
+
 import pandas as pd 
 import numpy as np
 
-
-from functools import partial
 import torch 
+import spacy
+import sklearn
 
 from datasets import load_dataset
 from datasets import Value, ClassLabel, Features, DatasetDict
@@ -82,9 +85,36 @@ def main(cfg: DictConfig) -> None:
     dataset = dataset.rename_column("Relation", "label")
     
     # drop symptom list at beginning of some assessments
-    dataset['train'] = dataset['train'].map(split_leading_symptom_list)
-    dataset['valid'] = dataset['valid'].map(split_leading_symptom_list)
+    # dataset['train'] = dataset['train'].map(split_leading_symptom_list)
+    # dataset['valid'] = dataset['valid'].map(split_leading_symptom_list)
     
+    if cfg.train.add_ner:
+        nlp_assessment = spacy.load(cfg.pretrained.spacy_assessment, exclude="parser")
+        nlp_plan = spacy.load(cfg.pretrained.spacy_plan, exclude="parser")
+        
+        # add the named entities
+        dataset['train'] = dataset['train'].map(partial(add_ner_assessment, nlp=nlp_assessment))
+        dataset['train'] = dataset['train'].map(partial(add_ner_plan, nlp=nlp_plan))        
+
+        dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment, nlp=nlp_assessment))
+        dataset['valid'] = dataset['valid'].map(partial(add_ner_plan, nlp=nlp_plan))        
+        
+        # we ASSUME that the ner labels we want are lowercase, UNLIKE the standard ones in the model
+        spans = [x for x in nlp_plan.get_pipe("ner").labels if x.islower()] + [x for x in nlp_assessment.get_pipe("ner").labels if x.islower()]
+
+        tokens = []
+        for span in spans:
+            tokens.append("<" + span + ">")
+            tokens.append("</" + span + ">")            
+        
+        # add the span tags to the vocab
+        _ = tokenizer.add_tokens(tokens)
+        model.resize_token_embeddings(len(tokenizer))
+        
+    if cfg.train.drop_mimic_deid:
+        dataset = dataset.map(remove_mimic_deid)
+        
+        
     # create training args and Trainer
     training_args = TrainingArguments(output_dir="test_trainer", 
                                       evaluation_strategy="epoch",
@@ -117,7 +147,7 @@ def main(cfg: DictConfig) -> None:
     
     # create collator
     data_collator = DataCollatorWithPadding(tokenizer,
-                                            max_length=1024, 
+                                            max_length=512, 
                                             padding="max_length",
                                             return_tensors="pt")    
     # create Trainer
