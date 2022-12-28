@@ -17,7 +17,8 @@ def extract_text_segments(example, mimic_note_df=None):
 
 def tokenize_function(examples, tokenizer=None):
     return tokenizer(examples['Assessment'], examples['Plan Subsection'],
-                                      truncation="longest_first",
+                                      truncation="only_second",
+                                      # truncation="longest_first",                     
                                       max_length=512,
                                       verbose=True)
                     
@@ -64,6 +65,66 @@ def add_ner_plan(example, nlp=None):
     example['Plan Subsection'] = tagged
     return example
 
+
+def add_ner_assessment_end(example, nlp=None):
+    '''
+    Takes a trained spacy model and tags with the NER tags we trained on for assessment
+    '''
+    tagged = ""
+    orig = example['Assessment']
+    doc = nlp(example['Assessment'])
+    
+    for ent in doc.ents:
+        tagged += "</" + ent.label_ + ">"
+
+    example['Assessment'] = orig + " " + tagged
+    return example
+
+
+def add_ner_plan_end(example, nlp=None):
+    '''
+    Takes a trained spacy model and tags with the NER tags we trained on for assessment
+    '''
+    tagged = ""
+    orig = example['Plan Subsection']
+    doc = nlp(example['Plan Subsection'])
+    
+    index = 0
+    for ent in doc.ents:
+        tagged += "</" + ent.label_ + ">"
+
+    example['Plan Subsection'] = orig + " " + tagged
+    return example
+
+def add_ner_so(example, nlp=None):
+    '''
+    Takes a trained spacy model and tags with the NER tags we trained on for S&O
+    '''
+    tagged = ""
+    orig = example['S']
+    doc = nlp(example['S'])
+    
+    index = 0
+    for ent in doc.ents:
+        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+        index = ent.end_char
+    tagged += orig[index:]
+
+    example['S'] = tagged
+    
+    tagged = ""
+    orig = example['O']
+    doc = nlp(example['O'])
+    
+    index = 0
+    for ent in doc.ents:
+        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+        index = ent.end_char
+    tagged += orig[index:]
+
+    example['O'] = tagged
+    
+    return example
 
     
 def split_leading_symptom_list(example):
@@ -137,3 +198,22 @@ def remove_MIMIC_deid(example):
     
     example['Plan Subsection'] = pat.sub("", example['Plan Subsection'])
     return example    
+
+def add_SO_sections(example):
+    
+    prepend = ""
+    if example['S']:
+        x = example['S'] + " "
+        prepend += x.strip()
+    if example['O']:
+        x = example['O'] + " "
+        prepend += x.strip()
+
+    # example['Assessment'] = prepend + example['Assessment']
+    # example['Assessment'] = example['Assessment'].strip()
+    example['Plan Subsection'] = example['Plan Subsection'] + "</s>" + prepend
+    example['Plan Subsection'] = example['Plan Subsection'].strip()
+    
+    # example['Plan Subsection'] = pat.sub("", example['Plan Subsection'])
+    return example    
+
