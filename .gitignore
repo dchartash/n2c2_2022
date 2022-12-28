@@ -207,3 +207,5 @@ tags
 test_trainer/
 outputs/
 images/
+
+*.out
