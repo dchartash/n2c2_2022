@@ -1,17 +1,14 @@
-import re 
-from functools import partial
-
 import pandas as pd 
 import numpy as np
+import tqdm
 
+from functools import partial
 import torch 
-import spacy
-import sklearn
+from torch.utils.data import Dataset
 
 from datasets import load_dataset
 from datasets import Value, ClassLabel, Features, DatasetDict
 from datasets import load_metric
-import evaluate
 
 
 import transformers
@@ -20,20 +17,15 @@ from transformers import GPT2Tokenizer, GPTNeoForSequenceClassification
 from transformers import DataCollatorWithPadding
 from transformers import logging
 from transformers import TrainingArguments, Trainer
+from transformers import pipeline
+from transformers import EvalPrediction
 
-from transformers import RobertaForSequenceClassification, BertForSequenceClassification
 
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
 from preprocessing.cleaning_utils import *
 from train_utils.metrics import *
-from train_utils.plot_utils import *
-from train_utils.custom_trainer import *
-
-import matplotlib.pyplot as plt
-import seaborn as sns
-plt.style.use('ggplot')
 
 logging.set_verbosity_warning()
 
@@ -51,25 +43,20 @@ def main(cfg: DictConfig) -> None:
     print(f"Using huggingface transformer model: {cfg.model.model_name}")
     # Define file paths
     
-    if cfg.model.model_type == "bert" or cfg.model.model_type == "roberta":
+    if cfg.model.model_type == "bert":
         tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
-        if cfg.model.model_type == "roberta":
-            model = RobertaForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4)
-        elif cfg.model.model_type == "bert":
-            model = BertForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4)
+        model = AutoModelForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4)
     elif cfg.model.model_type == "gptneo":    
         tokenizer = GPT2Tokenizer.from_pretrained(cfg.model.model_name)
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
         model = GPTNeoForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4,
                                                                 problem_type="single_label_classification",
-                                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"))
+                                                                pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"),
+)
         model.resize_token_embeddings(len(tokenizer))        
     else:
         raise ValueError(f"Model type isn't bert or gpt-neo, it's {cfg.model.model_type}")
-
-    # Read MIMIC notes
-    # notes = pd.read_csv(cfg.data.mimic_data_dir + "NOTEEVENTS.csv")
 
     # create hf Dataset
     classes = ['Not Relevant', 'Neither', 'Indirect', 'Direct']
@@ -80,18 +67,21 @@ def main(cfg: DictConfig) -> None:
         'HADM ID':Value("int64"),
         'Assessment':Value("string"),
         'Plan Subsection':Value("string"),
-        "Relation":Value("string")
+        "Relation":Value("string"),
+        "S":Value("string"),
+        "O":Value("string")        
+        
     }) 
 
     dataset = load_dataset("csv", data_files={
-                                "train":cfg.data.n2c2_data_dir + "train.csv",
-                                "valid":cfg.data.n2c2_data_dir + "dev.csv",
+                                "train":cfg.data.n2c2_data_dir + "train_so.csv",
+                                "valid":cfg.data.n2c2_data_dir + "dev_so.csv",
                             },
                            features=features)
 
     if cfg.train.fast_dev_run:
-        dataset['train'] = dataset['train'].shard(num_shards=10, index=0)
-        dataset['valid'] = dataset['valid'].shard(num_shards=5, index=0)
+        dataset['train'] = dataset['train'].shard(num_shards=1000, index=0)
+        dataset['valid'] = dataset['valid'].shard(num_shards=50, index=0)
 
     # create encoded class labels and rename
     dataset = dataset.class_encode_column("Relation")
@@ -103,6 +93,11 @@ def main(cfg: DictConfig) -> None:
     # drop symptom list at beginning of some assessments
     # dataset['train'] = dataset['train'].map(split_leading_symptom_list)
     # dataset['valid'] = dataset['valid'].map(split_leading_symptom_list)
+    if cfg.train.so_sections:
+        dataset = dataset.map(partial(add_SO_sections))
+    
+    print("AFTER TRAIN _SO sections")
+    print(dataset['valid'][0])
     
     if cfg.train.add_ner:
         nlp_assessment = spacy.load(cfg.pretrained.spacy_assessment, exclude="parser")
@@ -126,7 +121,30 @@ def main(cfg: DictConfig) -> None:
         # add the span tags to the vocab
         _ = tokenizer.add_tokens(tokens)
         model.resize_token_embeddings(len(tokenizer))
+    
+    elif cfg.train.add_ner_end:
+        nlp_assessment = spacy.load(cfg.pretrained.spacy_assessment, exclude="parser")
+        nlp_plan = spacy.load(cfg.pretrained.spacy_plan, exclude="parser")
         
+        # add the named entities
+        dataset['train'] = dataset['train'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
+        dataset['train'] = dataset['train'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
+
+        dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
+        dataset['valid'] = dataset['valid'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
+        
+        # we ASSUME that the ner labels we want are lowercase, UNLIKE the standard ones in the model
+        spans = [x for x in nlp_plan.get_pipe("ner").labels if x.islower()] + [x for x in nlp_assessment.get_pipe("ner").labels if x.islower()]
+
+        tokens = []
+        for span in spans:
+            tokens.append("</" + span + ">")            
+        
+        # add the span tags to the vocab
+        _ = tokenizer.add_tokens(tokens)
+        model.resize_token_embeddings(len(tokenizer))
+        
+    
     if cfg.train.drop_mimic_deid:
         dataset = dataset.map(remove_mimic_deid)
        
@@ -146,93 +164,63 @@ def main(cfg: DictConfig) -> None:
         dataset = dataset.map(partial(expand_abbreviations, spacy_pip=abbv_nlp, abbv_map=med_abbvs, unq_sfs=unq_sfs))
     
     # create training args and Trainer
-    training_args = TrainingArguments(output_dir=f"./outputs/{cfg.model.model_id}", 
-                                        overwrite_output_dir=False,
-                                        evaluation_strategy="epoch",
-                                        learning_rate=1e-5,
-                                        load_best_model_at_end=True,
-                                        warmup_ratio = 0.06,
-                                        gradient_accumulation_steps = 8,
-                                        num_train_epochs=cfg.train.epochs,
-                                        per_device_train_batch_size=cfg.train.batch_size,
-                                        fp16=True,
-                                        gradient_checkpointing=True,
-                                        save_total_limit = 1,
-                                        save_strategy="epoch",
-                                        log_level="debug",
-                                        logging_dir=f"./outputs/test",
-                                        logging_strategy="steps",
-                                        logging_first_step=True,
-                                        logging_steps=1,
-                                        # save_steps=1000,
+    training_args = TrainingArguments(output_dir="test_trainer", 
+                                      evaluation_strategy="epoch",
+                                      num_train_epochs=cfg.train.epochs,
+                                      per_device_train_batch_size=4,
+                                      
     )
     
     # metrics to track
     acc = load_metric("accuracy")
     macrof1 = load_metric("f1")    
-    roc_auc_score = evaluate.load("roc_auc", "multiclass")
 
     # create metric_dict for compute_metrics
     metric_dict = {}
     metric_dict['accuracy'] = {"metric":acc}
     metric_dict['f1-macro'] = {"metric":macrof1, "average":"macro"}
-    metric_dict['auroc'] = {'metric':roc_auc_score, "multi_class":'ovr'}
-    metric_dict['roc'] = {}
-    metric_dict["pr"] = {}
-    # tokenize
-    dataset = dataset.map(partial(tokenize_function, tokenizer=tokenizer), batched=True)
     
-    print(tokenizer.decode(dataset['valid'][0]['input_ids']))
+    print("Creating GPT prompts...")
+    # create GPT prompts
+    prompts = []
+    labels = []
+    for data in dataset['valid']:
+        question = 'To which category does the text belong?: "Direct", "Indirect", "Neither", "Not Relevant"'
+        prompt_str = question + '\nAssessment: ' + data['Assessment'] + '\nPlan: ' + data['Plan Subsection'] + '\nLabel: ' #\
+            # + str(data['label'])
+        labels.append(data['label'])
+        prompts.append(prompt_str)
+    
+    class ListDataset(Dataset):
+        def __init__(self, original_list):
+            self.original_list = original_list
+
+        def __len__(self):
+            return len(self.original_list)
+
+        def __getitem__(self, i):
+            return self.original_list[i]    
         
-    # cast as pytorch tensors and select a subset of columns we want
-    if cfg.model.model_type == "gptneo":
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-    elif cfg.model.model_type == "roberta":
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])    
-    else:
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])    
+    print("Creating Dataset obj...")        
+    mydataset = ListDataset(prompts)
+
+    print("Defining pipeline...")
+    rel_classifier = pipeline(task="text-classification", model=model, tokenizer=tokenizer, 
+                              return_all_scores=True, device=0, padding="max_length", max_length=512,
+                             truncation=True)
     
-    # create collator
-    data_collator = DataCollatorWithPadding(tokenizer,
-                                            max_length=512, 
-                                            padding="longest",
-                                            return_tensors="pt")    
-    # create Trainer
-    if cfg.train.weighted_loss:
-        trainer = CustomTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=dataset['train'],
-            eval_dataset=dataset['valid'],
-            compute_metrics=partial(compute_metrics, metric_dict=metric_dict),
-            data_collator=data_collator,        
-        )
-    else:
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=dataset['train'],
-            eval_dataset=dataset['valid'],
-            compute_metrics=partial(compute_metrics, metric_dict=metric_dict),
-            data_collator=data_collator,
-        )    
-    
-    # train!!
-    trainer.train()
-    
-    # predict for metrics
-    metrics = trainer.evaluate(dataset['valid'])
-    
-    fpr, tpr, roc_auc = metrics['eval_roc']
-    precision, recall, ap = metrics['eval_pr']
-    
-    print("id2label", id2label)
-    plot_multiclass_roc(fpr, tpr, roc_auc, figsize=(8, 6), labels=id2label)
-    plot_multiclass_pr(precision, recall, ap, figsize=(8, 6), labels=id2label)
-    
+    logits = np.zeros(shape=(len(prompts),4))
+    labels = np.array(labels)
+
+    print("Inference...")    
+    for idx, pred in enumerate(tqdm.tqdm(rel_classifier(mydataset))):
+        pred_logits = [x['score'] for x in pred]
+        logits[idx, :] = pred_logits
+                
+        
+    compute_metrics_func=partial(compute_metrics, metric_dict=metric_dict)
+    metrics = compute_metrics_func(EvalPrediction(logits, labels))
+    print("Metrics:", metrics)
     
 if __name__ == "__main__":
     main()
