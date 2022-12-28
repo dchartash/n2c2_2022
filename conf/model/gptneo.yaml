@@ -1,2 +1,3 @@
-model_name : "EleutherAI/gpt-neo-1.3B"
+model_name : "EleutherAI/gpt-neo-2.7B"
 model_type : "gptneo"
+model_id : "gptneo"

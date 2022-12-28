@@ -4,16 +4,25 @@ defaults:
 train:
     fast_dev_run: false
     epochs: 10
-    add_ner: true
-    drop_mimic_deid: true
-
+    add_ner: false
+    add_ner_end: false
+    drop_mimic_deid: false
+    expand_abbvs: false
+    batch_size: 2
+    weighted_loss: false
+    so_sections: false
+    add_ner_so: false
+save:
+    save_model: true    
 data:
     mimic_data_dir: "/home/vs428/project/MIMIC/files/mimiciii/1.4/"
     n2c2_data_dir: "/home/vs428/project/n2c2/2022/Data/"
+    abbreviation_inventory: "/home/vs428/project/Abbreviations/Metainventory_Version1.0.0.csv"
 
 pretrained:
-    spacy_assessment: "/home/vs428/Documents/prodigy/assessment_model/model-best"
-    spacy_plan: "/home/vs428/Documents/prodigy/plan_subsection_model/model-best"
-
+    spacy_assessment: "/home/vs428/project/n2c2_spacy_models/assessment_model_v2/model-best"
+    spacy_plan: "/home/vs428/project/n2c2_spacy_models/plan_subsection_model_v3/model-best"
+    spacy_so: "/home/vs428/project/n2c2_spacy_models/so_model/model-best"
+    
 hardware:
     gpu: true

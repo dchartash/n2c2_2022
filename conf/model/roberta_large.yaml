@@ -1,0 +1,3 @@
+model_name : "/home/vs428/project/models/RoBERTa-large-PM-M3-Voc/RoBERTa-large-PM-M3-Voc-hf"
+model_type : "roberta"
+model_id : "roberta_large"
