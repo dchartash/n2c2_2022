@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=n2c2_basic
+#SBATCH --job-name=n2c2_ner_unbalanced
 #SBATCH --out="slurm-%j.out"
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1 
@@ -23,4 +23,5 @@ conda activate n2c2_env2
 
 cd /home/vs428/Documents/n2c2_2022
 
-python ./trainer.py
+
+python ./trainer.py model=roberta_large train.add_ner=true train.weighted_loss=true

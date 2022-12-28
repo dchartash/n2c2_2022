@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=n2c2_basic
+#SBATCH --job-name=n2c2_inference
 #SBATCH --out="slurm-%j.out"
-#SBATCH --time=1-00:00:00
+#SBATCH --time=0-06:00:00
 #SBATCH --nodes=1 
 #SBATCH --ntasks=1
 #SBATCH --mem=95G
@@ -17,10 +17,12 @@ echo "Job submitted to the ${SLURM_JOB_PARTITION} partition, the default partiti
 echo "Job name: ${SLURM_JOB_NAME}, Job ID: ${SLURM_JOB_ID}"
 echo "  I have ${SLURM_CPUS_ON_NODE} CPUs and ${mem_gbytes}GiB of RAM on compute node $(hostname)"
 
-module load CUDA/11.1.1-GCC-10.2.0
+
 module load miniconda
-conda activate n2c2_env2
+module load CUDA/11.3.1
+conda activate n2c2_env3
 
 cd /home/vs428/Documents/n2c2_2022
 
-python ./trainer.py
+
+python ./Inference.py

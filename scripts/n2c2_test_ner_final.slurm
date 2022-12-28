@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=n2c2_basic
+#SBATCH --job-name=n2c2_ner4real
 #SBATCH --out="slurm-%j.out"
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1 
@@ -19,8 +19,10 @@ echo "  I have ${SLURM_CPUS_ON_NODE} CPUs and ${mem_gbytes}GiB of RAM on compute
 
 module load CUDA/11.1.1-GCC-10.2.0
 module load miniconda
-conda activate n2c2_env2
+conda activate n2c2_env3
 
 cd /home/vs428/Documents/n2c2_2022
 
-python ./trainer.py
+
+echo "python ./inference.py model=roberta_large_test train.add_ner=true train.drop_mimic_deid=true train.batch_size=4"
+python ./inference.py model=roberta_large_test train.add_ner=true train.drop_mimic_deid=true train.batch_size=4

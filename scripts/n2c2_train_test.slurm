@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=n2c2_basic
+#SBATCH --job-name=n2c2_test
 #SBATCH --out="slurm-%j.out"
-#SBATCH --time=1-00:00:00
+#SBATCH --time=0-00:30:00
 #SBATCH --nodes=1 
 #SBATCH --ntasks=1
-#SBATCH --mem=95G
+#SBATCH --mem=55G
 #SBATCH --gpus=1
 #SBATCH --mail-type=ALL
 
@@ -23,4 +23,6 @@ conda activate n2c2_env2
 
 cd /home/vs428/Documents/n2c2_2022
 
-python ./trainer.py
+python ./trainer.py train.fast_dev_run=true model=roberta_large train.batch_size=8 train.epochs=1
+
+# train.add_ner=true train.drop_mimic_deid=true train.expand_abbvs=true train.weighted_loss=true 
