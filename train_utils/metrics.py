@@ -17,7 +17,8 @@ def compute_metrics(eval_pred, metric_dict):
     The metric_dict will look like: {"metric name": {"metric":metric,
                                                      **kwargs}
     '''
-    logits, labels = eval_pred
+    logits = eval_pred.predictions
+    labels = eval_pred.label_ids
     
     predictions = np.argmax(logits, axis=-1)
     probs = torch.nn.functional.softmax(torch.tensor(logits).float(), dim=-1)

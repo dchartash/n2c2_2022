@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=n2c2_ner4real
+#SBATCH --job-name=n2c2_ner
 #SBATCH --out="slurm-%j.out"
 #SBATCH --time=0-12:00:00
 #SBATCH --nodes=1 
@@ -25,5 +25,5 @@ conda activate n2c2_env3
 cd /home/vs428/Documents/n2c2_2022
 
 
-python ./trainer_with_inference.py model=roberta_large train.add_ner=true train.add_ner_end=false train.batch_size=6 train.so_sections=true train.add_ner_so=true train.fast_dev_run=false 
+python ./trainer_with_inference.py model=roberta_large train.add_ner=false train.add_ner_end=true train.batch_size=6 train.so_sections=false train.add_ner_so=false train.fast_dev_run=false 
 # python ./trainer_with_inference.py model=bert train.add_ner=false train.add_ner_end=false train.batch_size=6 train.so_sections=false train.fast_dev_run=false save.save_model=false

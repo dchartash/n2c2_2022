@@ -38,9 +38,12 @@ plt.style.use('ggplot')
 logging.set_verbosity_warning()
 spacy.require_gpu()
 
-@hydra.main(config_path="conf/", config_name="config")
+@hydra.main(config_path="conf/", config_name="test_config")
 def main(cfg: DictConfig) -> None:
     
+    if not cfg.pretrained.entail_model:
+        raise Exception("We didn't supply a pretrained model for inference")
+        
     print(OmegaConf.to_yaml(cfg))
     
     # some checks on config:
@@ -53,20 +56,20 @@ def main(cfg: DictConfig) -> None:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         print(device)
     
-    print(f"Using huggingface transformer model: {cfg.model.model_name}")
+    print(f"Using pretrained transformer model: {cfg.pretrained.entail_model}")
     # Define file paths
     
     if cfg.model.model_type == "bert" or cfg.model.model_type == "roberta":
         tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
         if cfg.model.model_type == "roberta":
-            model = RobertaForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4)
+            model = RobertaForSequenceClassification.from_pretrained(cfg.pretrained.entail_model, num_labels=4)
         elif cfg.model.model_type == "bert":
-            model = BertForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4)
+            model = BertForSequenceClassification.from_pretrained(cfg.pretrained.entail_model, num_labels=4)
     elif cfg.model.model_type == "gptneo":    
         tokenizer = GPT2Tokenizer.from_pretrained(cfg.model.model_name)
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
-        model = GPTNeoForSequenceClassification.from_pretrained(cfg.model.model_name, num_labels=4,
+        model = GPTNeoForSequenceClassification.from_pretrained(cfg.pretrained.entail_model, num_labels=4,
                                                                 problem_type="single_label_classification",
                                                                 pad_token_id=tokenizer.convert_tokens_to_ids("[PAD]"))
         model.resize_token_embeddings(len(tokenizer))        
@@ -80,26 +83,6 @@ def main(cfg: DictConfig) -> None:
     classes = ['Not Relevant', 'Neither', 'Indirect', 'Direct']
     
     # instead we will use the raw text for now
-    features = Features({
-        'ROW ID':Value("int64"),
-        'HADM ID':Value("int64"),
-        'Assessment':Value("string"),
-        'Plan Subsection':Value("string"),
-        "Relation":Value("string"),
-        "S":Value("string"),
-        "O":Value("string")        
-        
-    }) 
-
-    dataset = load_dataset("csv", data_files={
-                                "train":cfg.data.n2c2_data_dir + "train_so.csv",
-                                "valid":cfg.data.n2c2_data_dir + "dev_so.csv",
-                                # "train":cfg.data.n2c2_data_dir + "train.csv",
-                                # "valid":cfg.data.n2c2_data_dir + "dev.csv",
-        
-                            },
-                           features=features)
-    
     test_features = Features({
         'ROW ID':Value("int64"),
         'HADM ID':Value("int64"),
@@ -128,23 +111,14 @@ def main(cfg: DictConfig) -> None:
     label2id = {'Not Relevant':3, 'Neither':2, 'Indirect':1, 'Direct':0}
     id2label = {v:k for k,v in label2id.items()}
     
-    dataset = dataset.class_encode_column("Relation")
-    dataset = dataset.align_labels_with_mapping(label2id, "Relation")
-    dataset = dataset.rename_column("Relation", "label")
-
     test_dataset = test_dataset.class_encode_column("Relation")
     test_dataset = test_dataset.align_labels_with_mapping(label2id, "Relation")
     test_dataset = test_dataset.rename_column("Relation", "label")
     
-    # drop symptom list at beginning of some assessments
-    # dataset['train'] = dataset['train'].map(split_leading_symptom_list)
-    # dataset['valid'] = dataset['valid'].map(split_leading_symptom_list)
     if cfg.train.so_sections:
-        dataset = dataset.map(partial(add_SO_sections))
         test_dataset = test_dataset.map(partial(add_SO_sections))
     
     print("AFTER TRAIN _SO sections")
-    print(dataset['valid'][0])
     print(test_dataset['test'][0])
     
     if cfg.train.add_ner:
@@ -153,12 +127,6 @@ def main(cfg: DictConfig) -> None:
         nlp_plan = spacy.load(cfg.pretrained.spacy_plan, exclude="parser")
         
         # add the named entities
-        dataset['train'] = dataset['train'].map(partial(add_ner_assessment, nlp=nlp_assessment))
-        dataset['train'] = dataset['train'].map(partial(add_ner_plan, nlp=nlp_plan))        
-
-        dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment, nlp=nlp_assessment))
-        dataset['valid'] = dataset['valid'].map(partial(add_ner_plan, nlp=nlp_plan))        
-
         test_dataset['test'] = test_dataset['test'].map(partial(add_ner_assessment, nlp=nlp_assessment))
         test_dataset['test'] = test_dataset['test'].map(partial(add_ner_plan, nlp=nlp_plan))        
         
@@ -180,12 +148,6 @@ def main(cfg: DictConfig) -> None:
         nlp_plan = spacy.load(cfg.pretrained.spacy_plan, exclude="parser")
         
         # add the named entities
-        dataset['train'] = dataset['train'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
-        dataset['train'] = dataset['train'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
-
-        dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
-        dataset['valid'] = dataset['valid'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
-
         test_dataset['test'] = test_dataset['test'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
         test_dataset['test'] = test_dataset['test'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
         
@@ -206,8 +168,6 @@ def main(cfg: DictConfig) -> None:
         nlp_so = spacy.load(cfg.pretrained.spacy_so, exclude="parser")
         
         # add the named entities
-        dataset['train'] = dataset['train'].map(partial(add_ner_so, nlp=nlp_so))
-        dataset['valid'] = dataset['valid'].map(partial(add_ner_so, nlp=nlp_so))
         test_dataset['test'] = test_dataset['test'].map(partial(add_ner_so, nlp=nlp_so))
         
         # we ASSUME that the ner labels we want are lowercase, UNLIKE the standard ones in the model
@@ -224,7 +184,6 @@ def main(cfg: DictConfig) -> None:
         model.resize_token_embeddings(len(tokenizer))
     
     if cfg.train.drop_mimic_deid:
-        dataset = dataset.map(remove_mimic_deid)
         test_dataset = test_dataset.map(remove_mimic_deid)
        
     if cfg.train.expand_abbvs:
@@ -240,7 +199,6 @@ def main(cfg: DictConfig) -> None:
         med_abbvs = med_abbvs.sort_values(['Source'])
         unq_sfs = med_abbvs['SF'].unique()
         
-        dataset = dataset.map(partial(expand_abbreviations, spacy_pip=abbv_nlp, abbv_map=med_abbvs, unq_sfs=unq_sfs))
         test_dataset = test_dataset.map(partial(expand_abbreviations, spacy_pip=abbv_nlp, abbv_map=med_abbvs, unq_sfs=unq_sfs))
                                   
     
@@ -288,24 +246,16 @@ def main(cfg: DictConfig) -> None:
     metric_dict['roc'] = {}
     metric_dict["pr"] = {}
     # tokenize
-    dataset = dataset.map(partial(tokenize_function, tokenizer=tokenizer), batched=True)
     test_dataset = test_dataset.map(partial(tokenize_function, tokenizer=tokenizer), batched=True)    
     
-    print(tokenizer.decode(dataset['valid'][0]['input_ids']))
     print(tokenizer.decode(test_dataset['test'][0]['input_ids']))
         
     # cast as pytorch tensors and select a subset of columns we want
     if cfg.model.model_type == "gptneo":
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
         test_dataset['test'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
     elif cfg.model.model_type == "roberta":
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])    
         test_dataset['test'].set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])    
     else:
-        dataset['train'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])
-        dataset['valid'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])    
         test_dataset['test'].set_format(type='torch', columns=['input_ids', 'token_type_ids', 'attention_mask', 'label'])
     
     # create collator
@@ -318,8 +268,6 @@ def main(cfg: DictConfig) -> None:
         trainer = CustomTrainer(
             model=model,
             args=training_args,
-            train_dataset=dataset['train'],
-            eval_dataset=dataset['valid'],
             compute_metrics=partial(compute_metrics, metric_dict=metric_dict),
             data_collator=data_collator,        
         )
@@ -327,25 +275,13 @@ def main(cfg: DictConfig) -> None:
         trainer = Trainer(
             model=model,
             args=training_args,
-            train_dataset=dataset['train'],
-            eval_dataset=dataset['valid'],
             compute_metrics=partial(compute_metrics, metric_dict=metric_dict),
             data_collator=data_collator,
         )    
     
     # train!!
-    trainer.train()
     
     # predict for metrics
-    metrics = trainer.evaluate(dataset['valid'])
-    
-    fpr, tpr, roc_auc = metrics['eval_roc']
-    precision, recall, ap = metrics['eval_pr']
-    
-    print("id2label", id2label)
-    plot_multiclass_roc(fpr, tpr, roc_auc, figsize=(8, 6), labels=id2label, fname="Eval_AUROC.png")
-    plot_multiclass_pr(precision, recall, ap, figsize=(8, 6), labels=id2label, fname="Eval_AUPRC.png")
-    
     predict_output = trainer.predict(test_dataset['test'])
     preds = np.argmax(predict_output.predictions, axis=-1)
     print("\n---------------------------------------\n\nTest Summary Stats1")

@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --partition=gpu
-#SBATCH --job-name=gptneo
+#SBATCH --job-name=vs_infer
 #SBATCH --out="slurm-%j.out"
 #SBATCH --time=0-2:00:00
 #SBATCH --nodes=1 
 #SBATCH --ntasks=1
 #SBATCH --mem=60G
-#SBATCH --gpus=rtx5000:1
+#SBATCH --gpus=1
 #SBATCH --mail-type=ALL
 
 mem_bytes=$(</sys/fs/cgroup/memory/slurm/uid_${SLURM_JOB_UID}/job_${SLURM_JOB_ID}/memory.limit_in_bytes)
@@ -19,10 +19,11 @@ echo "  I have ${SLURM_CPUS_ON_NODE} CPUs and ${mem_gbytes}GiB of RAM on compute
 
 
 module load miniconda
-module load CUDA/11.3.1
-conda activate n2c2_env3
+conda activate n2c2_env4
 
 cd /home/vs428/Documents/n2c2_2022
 
+ENTAILMENT="/home/vs428/project/n2c2_models/roberta_large_ner_so/roberta_large_ner_so/outputs/roberta_large/checkpoint-384/"
+echo $ENTAILMENT
 
-python ./gpt_inference.py model=gptneo train.add_ner=false train.add_ner_end=false train.batch_size=1 train.so_sections=false train.fast_dev_run=false
+python ./final_inference.py model=roberta_large pretrained.entail_model=$ENTAILMENT train.add_ner=true train.add_ner_end=false train.batch_size=6 train.so_sections=true train.add_ner_so=false train.fast_dev_run=false save.save_model=false

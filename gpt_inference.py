@@ -78,6 +78,24 @@ def main(cfg: DictConfig) -> None:
                                 "valid":cfg.data.n2c2_data_dir + "dev_so.csv",
                             },
                            features=features)
+    
+    test_features = Features({
+        'ROW ID':Value("int64"),
+        'HADM ID':Value("int64"),
+        'Assessment':Value("string"),
+        'Plan Subsection':Value("string"),
+        "Relation":Value("string"),        
+        "S":Value("string"),
+        "O":Value("string")        
+        
+    }) 
+
+    test_dataset = load_dataset("csv", data_files={
+                                # "test":cfg.data.n2c2_data_dir + "n2c2_test_noLabel.csv",
+                                "test":cfg.data.n2c2_data_dir + "n2c2_track3_test_so.csv",
+                            },
+                           features=test_features)
+    
 
     if cfg.train.fast_dev_run:
         dataset['train'] = dataset['train'].shard(num_shards=1000, index=0)
@@ -90,14 +108,22 @@ def main(cfg: DictConfig) -> None:
     dataset = dataset.align_labels_with_mapping(label2id, "Relation")
     dataset = dataset.rename_column("Relation", "label")
     
+    test_dataset = test_dataset.class_encode_column("Relation")
+    test_dataset = test_dataset.align_labels_with_mapping(label2id, "Relation")
+    test_dataset = test_dataset.rename_column("Relation", "label")
+
+    
     # drop symptom list at beginning of some assessments
     # dataset['train'] = dataset['train'].map(split_leading_symptom_list)
     # dataset['valid'] = dataset['valid'].map(split_leading_symptom_list)
     if cfg.train.so_sections:
         dataset = dataset.map(partial(add_SO_sections))
+        test_dataset = test_dataset.map(partial(add_SO_sections))
+        
     
     print("AFTER TRAIN _SO sections")
     print(dataset['valid'][0])
+    print(test_dataset['test'][0])
     
     if cfg.train.add_ner:
         nlp_assessment = spacy.load(cfg.pretrained.spacy_assessment, exclude="parser")
@@ -109,6 +135,9 @@ def main(cfg: DictConfig) -> None:
 
         dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment, nlp=nlp_assessment))
         dataset['valid'] = dataset['valid'].map(partial(add_ner_plan, nlp=nlp_plan))        
+
+        test_dataset['test'] = test_dataset['test'].map(partial(add_ner_assessment, nlp=nlp_assessment))
+        test_dataset['test'] = test_dataset['test'].map(partial(add_ner_plan, nlp=nlp_plan))        
         
         # we ASSUME that the ner labels we want are lowercase, UNLIKE the standard ones in the model
         spans = [x for x in nlp_plan.get_pipe("ner").labels if x.islower()] + [x for x in nlp_assessment.get_pipe("ner").labels if x.islower()]
@@ -132,6 +161,9 @@ def main(cfg: DictConfig) -> None:
 
         dataset['valid'] = dataset['valid'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
         dataset['valid'] = dataset['valid'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
+
+        test_dataset['test'] = test_dataset['test'].map(partial(add_ner_assessment_end, nlp=nlp_assessment))
+        test_dataset['test'] = test_dataset['test'].map(partial(add_ner_plan_end, nlp=nlp_plan))        
         
         # we ASSUME that the ner labels we want are lowercase, UNLIKE the standard ones in the model
         spans = [x for x in nlp_plan.get_pipe("ner").labels if x.islower()] + [x for x in nlp_assessment.get_pipe("ner").labels if x.islower()]
@@ -147,6 +179,7 @@ def main(cfg: DictConfig) -> None:
     
     if cfg.train.drop_mimic_deid:
         dataset = dataset.map(remove_mimic_deid)
+        test_dataset = test_dataset.map(remove_mimic_deid)        
        
     if cfg.train.expand_abbvs:
         abbv_nlp = spacy.load("en_core_sci_lg")
@@ -162,7 +195,8 @@ def main(cfg: DictConfig) -> None:
         unq_sfs = med_abbvs['SF'].unique()
         
         dataset = dataset.map(partial(expand_abbreviations, spacy_pip=abbv_nlp, abbv_map=med_abbvs, unq_sfs=unq_sfs))
-    
+        test_dataset = test_dataset.map(partial(expand_abbreviations, spacy_pip=abbv_nlp, abbv_map=med_abbvs, unq_sfs=unq_sfs))
+
     # create training args and Trainer
     training_args = TrainingArguments(output_dir="test_trainer", 
                                       evaluation_strategy="epoch",
@@ -190,7 +224,17 @@ def main(cfg: DictConfig) -> None:
             # + str(data['label'])
         labels.append(data['label'])
         prompts.append(prompt_str)
-    
+
+    test_prompts = []
+    test_labels = []
+    for data in test_dataset['test']:
+        question = 'To which category does the text belong?: "Direct", "Indirect", "Neither", "Not Relevant"'
+        prompt_str = question + '\nAssessment: ' + data['Assessment'] + '\nPlan: ' + data['Plan Subsection'] + '\nLabel: ' #\
+            # + str(data['label'])
+        test_labels.append(data['label'])
+        test_prompts.append(prompt_str)
+        
+        
     class ListDataset(Dataset):
         def __init__(self, original_list):
             self.original_list = original_list
@@ -204,6 +248,9 @@ def main(cfg: DictConfig) -> None:
     print("Creating Dataset obj...")        
     mydataset = ListDataset(prompts)
 
+    print("Creating Dataset obj...")        
+    my_testdataset = ListDataset(test_prompts)
+
     print("Defining pipeline...")
     rel_classifier = pipeline(task="text-classification", model=model, tokenizer=tokenizer, 
                               return_all_scores=True, device=0, padding="max_length", max_length=512,
@@ -211,16 +258,27 @@ def main(cfg: DictConfig) -> None:
     
     logits = np.zeros(shape=(len(prompts),4))
     labels = np.array(labels)
+    
+    test_logits = np.zeros(shape=(len(test_prompts),4))
+    test_labels = np.array(test_labels)    
 
     print("Inference...")    
     for idx, pred in enumerate(tqdm.tqdm(rel_classifier(mydataset))):
         pred_logits = [x['score'] for x in pred]
         logits[idx, :] = pred_logits
                 
-        
+    for idx, pred in enumerate(tqdm.tqdm(rel_classifier(my_testdataset))):
+        pred_logits = [x['score'] for x in pred]
+        test_logits[idx, :] = pred_logits
+
+            
     compute_metrics_func=partial(compute_metrics, metric_dict=metric_dict)
     metrics = compute_metrics_func(EvalPrediction(logits, labels))
-    print("Metrics:", metrics)
+    print("Eval Metrics:", metrics)
+    
+    metrics = compute_metrics_func(EvalPrediction(test_logits, test_labels))
+    print("Test Metrics:", metrics)
+
     
 if __name__ == "__main__":
     main()

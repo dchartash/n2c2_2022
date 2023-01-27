@@ -100,29 +100,31 @@ def add_ner_so(example, nlp=None):
     '''
     Takes a trained spacy model and tags with the NER tags we trained on for S&O
     '''
-    tagged = ""
-    orig = example['S']
-    doc = nlp(example['S'])
-    
-    index = 0
-    for ent in doc.ents:
-        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
-        index = ent.end_char
-    tagged += orig[index:]
+    if example['S']:
+        tagged = ""
+        orig = example['S']
+        doc = nlp(example['S'])
 
-    example['S'] = tagged
-    
-    tagged = ""
-    orig = example['O']
-    doc = nlp(example['O'])
-    
-    index = 0
-    for ent in doc.ents:
-        tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
-        index = ent.end_char
-    tagged += orig[index:]
+        index = 0
+        for ent in doc.ents:
+            tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+            index = ent.end_char
+        tagged += orig[index:]
 
-    example['O'] = tagged
+        example['S'] = tagged
+    
+    if example['O']:
+        tagged = ""
+        orig = example['O']
+        doc = nlp(example['O'])
+
+        index = 0
+        for ent in doc.ents:
+            tagged += orig[index: ent.start_char] + "<"+ ent.label_ + ">" + orig[ent.start_char:ent.end_char] + "</" + ent.label_ + ">"
+            index = ent.end_char
+        tagged += orig[index:]
+
+        example['O'] = tagged
     
     return example
 
@@ -211,7 +213,7 @@ def add_SO_sections(example):
 
     # example['Assessment'] = prepend + example['Assessment']
     # example['Assessment'] = example['Assessment'].strip()
-    example['Plan Subsection'] = example['Plan Subsection'] + "</s>" + prepend
+    example['Plan Subsection'] = example['Plan Subsection'] + "<\s>" + prepend
     example['Plan Subsection'] = example['Plan Subsection'].strip()
     
     # example['Plan Subsection'] = pat.sub("", example['Plan Subsection'])
