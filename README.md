@@ -4,7 +4,7 @@ This is the code used in training Yale's submission to the [n2c2 2022 Challenge:
 
 Configuration files are all located under the [conf/](https://github.com/dchartash/n2c2_2022/tree/main/conf) directory. 
 
-Further investigation was done to explain model predictions using SHAPley values and the output html files are under [explainability/](https://github.com/dchartash/n2c2_2022/tree/main/explainability) with the code to perform the analysis under [](https://github.com/dchartash/n2c2_2022/tree/main/Shap_Viz.ipynb). 
+Further investigation was done to explain model predictions using SHAPley values and the output html files are under [explainability/](https://github.com/dchartash/n2c2_2022/tree/main/explainability) with the code to perform the analysis under [Shap_Viz.ipynb](https://github.com/dchartash/n2c2_2022/blob/main/Shap_Viz.ipynb). Due to their size and interactive nature, these will need to be downloaded and opened locally. 
 
 # Training and Inference
 
